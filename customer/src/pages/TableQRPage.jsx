@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMenu } from '../context/MenuContext';
 import { getTableDetails } from '../services/api';
-import { Utensils, AlertCircle, ArrowRight, Phone } from 'lucide-react';
+import { Utensils, AlertCircle, ArrowRight, Phone, RotateCcw } from 'lucide-react';
 
 export const TableQRPage = () => {
   const { qrToken } = useParams();
@@ -12,35 +12,36 @@ export const TableQRPage = () => {
   const [validating, setValidating] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const validateToken = async () => {
-      try {
-        setValidating(true);
-        const table = await getTableDetails(qrToken);
-        setCurrentTable(table);
-        // Persist table in sessionStorage in case customer refreshes
-        sessionStorage.setItem('qissa_active_table', JSON.stringify(table));
-        if (table.sessionToken) {
-          sessionStorage.setItem('qissa_table_session_token', table.sessionToken);
-          setTableSessionToken(table.sessionToken);
-        }
-        // Redirect to homepage with table active
-        navigate('/', { replace: true });
-      } catch (err) {
-        console.error('QR Validation failed:', err);
-        setError(
-          err.response?.data?.message ||
-            'This table QR code is invalid or has expired. Please ask your server for assistance.'
-        );
-      } finally {
-        setValidating(false);
+  const validateToken = useCallback(async () => {
+    try {
+      setValidating(true);
+      setError(null);
+      const table = await getTableDetails(qrToken);
+      setCurrentTable(table);
+      // Persist table in sessionStorage in case customer refreshes
+      sessionStorage.setItem('qissa_active_table', JSON.stringify(table));
+      if (table.sessionToken) {
+        sessionStorage.setItem('qissa_table_session_token', table.sessionToken);
+        setTableSessionToken(table.sessionToken);
       }
-    };
+      // Redirect to homepage with table active
+      navigate('/', { replace: true });
+    } catch (err) {
+      console.error('QR Validation failed:', err);
+      setError(
+        err.response?.data?.message ||
+          'Connection to server timed out or table code is invalid. Tap retry below.'
+      );
+    } finally {
+      setValidating(false);
+    }
+  }, [qrToken, setCurrentTable, setTableSessionToken, navigate]);
 
+  useEffect(() => {
     if (qrToken) {
       validateToken();
     }
-  }, [qrToken, setCurrentTable, navigate]);
+  }, [qrToken, validateToken]);
 
   if (validating) {
     return (
@@ -50,6 +51,7 @@ export const TableQRPage = () => {
         </div>
         <h2 className="font-serif text-2xl font-bold text-[#1A1A1A] mb-2">Connecting to Your Table...</h2>
         <p className="text-sm text-[#6B655D]">Validating QR token and loading digital menu.</p>
+        <p className="text-xs text-[#8C8275] mt-2">If cloud server is waking up, this may take a moment...</p>
       </div>
     );
   }
@@ -65,8 +67,16 @@ export const TableQRPage = () => {
 
         <div className="space-y-3">
           <button
+            onClick={validateToken}
+            className="w-full py-3 px-4 rounded-full bg-[#E8602C] hover:bg-[#D14E1E] text-white text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Retry Connecting to Table</span>
+          </button>
+
+          <button
             onClick={() => navigate('/')}
-            className="w-full py-3 px-4 rounded-full bg-[#E8602C] hover:bg-[#D14E1E] text-white text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2"
+            className="w-full py-3 px-4 rounded-full bg-white hover:bg-neutral-50 text-[#1A1A1A] text-xs font-bold uppercase tracking-wider border border-[#EAE3D6] transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             <span>Browse General Menu</span>
             <ArrowRight className="w-4 h-4" />

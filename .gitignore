@@ -28,6 +28,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Media recordings
+*.mp4
+
 # Local uploads
 backend/uploads/*
 !backend/uploads/.gitkeep

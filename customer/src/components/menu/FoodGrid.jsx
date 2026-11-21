@@ -64,6 +64,9 @@ export const FoodGrid = () => {
     filteredItems,
     categories,
     loading,
+    error,
+    isWakingUp,
+    refreshMenu,
     searchQuery,
     setSearchQuery,
     dietaryFilter,
@@ -76,9 +79,37 @@ export const FoodGrid = () => {
 
   if (loading && categories.length === 0) {
     return (
-      <div className="py-20 text-center">
-        <div className="inline-block w-10 h-10 border-4 border-[#E8602C] border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="font-serif text-lg text-[#1A1A1A]">Preparing our menu...</p>
+      <div className="py-20 text-center max-w-md mx-auto px-4">
+        <div className="inline-block w-12 h-12 border-4 border-[#E8602C] border-t-transparent rounded-full animate-spin mb-4" />
+        <h3 className="font-serif text-xl font-bold text-[#1A1A1A] mb-2">Preparing Our Menu</h3>
+        {isWakingUp ? (
+          <p className="text-xs text-[#6B655D] leading-relaxed">
+            Connecting to cloud server. If the server is waking up from sleep, this may take a few moments...
+          </p>
+        ) : (
+          <p className="text-xs text-[#6B655D]">Loading authentic Middle Eastern dishes...</p>
+        )}
+      </div>
+    );
+  }
+
+  if (error && categories.length === 0) {
+    return (
+      <div className="py-16 px-4 text-center max-w-md mx-auto bg-white rounded-3xl border border-[#F2EBE0] p-8 shadow-sm my-8">
+        <div className="w-16 h-16 rounded-full bg-orange-100 text-[#E8602C] flex items-center justify-center mx-auto mb-4">
+          <Utensils className="w-8 h-8" />
+        </div>
+        <h3 className="font-serif text-xl font-bold text-[#1A1A1A] mb-2">Menu Loading Delayed</h3>
+        <p className="text-xs text-[#6B655D] leading-relaxed mb-6">
+          {error || 'Unable to load menu. The cloud server may still be waking up.'}
+        </p>
+        <button
+          onClick={() => refreshMenu(true)}
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#E8602C] hover:bg-[#D14E1E] text-white text-xs font-bold uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>Retry Loading Menu</span>
+        </button>
       </div>
     );
   }

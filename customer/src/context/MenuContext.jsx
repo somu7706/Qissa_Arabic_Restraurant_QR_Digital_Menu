@@ -6,16 +6,54 @@ import {
   getMenuItems,
   getSpecials,
   getPopularDishes,
+  DEFAULT_PRODUCTION_BACKEND,
 } from '../services/api';
+import fallbackMenu from '../data/fallbackMenu.json';
 
 const MenuContext = createContext(null);
 
+const MENU_CACHE_KEY = 'qissa_menu_cache_v2';
+
+const getInitialMenuData = () => {
+  try {
+    const raw = localStorage.getItem(MENU_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.menuItems) && parsed.menuItems.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('[MenuContext] Could not load localStorage cache:', e);
+  }
+  return fallbackMenu;
+};
+
+const saveCache = (data) => {
+  try {
+    localStorage.setItem(
+      MENU_CACHE_KEY,
+      JSON.stringify({
+        restaurant: data.restaurant,
+        categories: data.categories,
+        menuItems: data.menuItems,
+        specials: data.specials,
+        popularDishes: data.popularDishes,
+        timestamp: Date.now(),
+      })
+    );
+  } catch (e) {
+    console.warn('[MenuContext] Could not persist menu cache:', e);
+  }
+};
+
 export const MenuProvider = ({ children }) => {
-  const [restaurant, setRestaurant] = useState(null);
-  const [categories, setCategories] = useState([]);
-  const [menuItems, setMenuItems] = useState([]);
-  const [specials, setSpecials] = useState([]);
-  const [popularDishes, setPopularDishes] = useState([]);
+  const initialData = useMemo(() => getInitialMenuData(), []);
+  const [restaurant, setRestaurant] = useState(() => initialData?.restaurant || fallbackMenu?.restaurant || null);
+  const [categories, setCategories] = useState(() => initialData?.categories || fallbackMenu?.categories || []);
+  const [menuItems, setMenuItems] = useState(() => initialData?.menuItems || fallbackMenu?.menuItems || []);
+  const [specials, setSpecials] = useState(() => initialData?.specials || fallbackMenu?.specials || []);
+  const [popularDishes, setPopularDishes] = useState(() => initialData?.popularDishes || fallbackMenu?.popularDishes || []);
   const [currentTable, setCurrentTable] = useState(() => {
     try {
       const saved = sessionStorage.getItem('qissa_active_table');
@@ -27,7 +65,8 @@ export const MenuProvider = ({ children }) => {
   const [tableSessionToken, setTableSessionToken] = useState(() => {
     return sessionStorage.getItem('qissa_table_session_token') || null;
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [isWakingUp, setIsWakingUp] = useState(false);
   const [error, setError] = useState(null);
 
   // Active Category (for Category Navigation bar & Scroll Spy tracking) - Default to 'all'
@@ -63,11 +102,21 @@ export const MenuProvider = ({ children }) => {
   }, []);
 
   const fetchAllData = useCallback(async (isInitial = false) => {
+    let wakeTimer = null;
     try {
       if (isInitial || isInitialMountRef.current) {
-        setLoading(true);
+        setMenuItems((current) => {
+          if (!current || current.length === 0) setLoading(true);
+          return current;
+        });
+
+        wakeTimer = setTimeout(() => {
+          setIsWakingUp(true);
+        }, 3000);
       }
-      const [restData, catData, menuData, specData, popData] = await Promise.all([
+
+      // Use Promise.allSettled so partial endpoint failures never crash the whole menu
+      const results = await Promise.allSettled([
         getRestaurantInfo(),
         getCategories(),
         getMenuItems(),
@@ -75,26 +124,68 @@ export const MenuProvider = ({ children }) => {
         getPopularDishes(),
       ]);
 
-      setRestaurant(restData);
-      setCategories(catData);
-      setMenuItems(menuData);
-      setSpecials(specData);
-      setPopularDishes(popData);
-      setError(null);
+      const [restRes, catRes, menuRes, specRes, popRes] = results;
+
+      let hasCoreData = false;
+
+      if (restRes.status === 'fulfilled' && restRes.value) {
+        setRestaurant(restRes.value);
+      }
+      if (catRes.status === 'fulfilled' && Array.isArray(catRes.value) && catRes.value.length > 0) {
+        setCategories(catRes.value);
+        hasCoreData = true;
+      }
+      if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
+        setMenuItems(menuRes.value);
+        hasCoreData = true;
+      }
+      if (specRes.status === 'fulfilled' && Array.isArray(specRes.value)) {
+        setSpecials(specRes.value);
+      }
+      if (popRes.status === 'fulfilled' && Array.isArray(popRes.value)) {
+        setPopularDishes(popRes.value);
+      }
+
+      if (hasCoreData) {
+        setError(null);
+        saveCache({
+          restaurant: restRes.status === 'fulfilled' ? restRes.value : initialData?.restaurant,
+          categories: catRes.status === 'fulfilled' ? catRes.value : initialData?.categories,
+          menuItems: menuRes.status === 'fulfilled' ? menuRes.value : initialData?.menuItems,
+          specials: specRes.status === 'fulfilled' ? specRes.value : initialData?.specials,
+          popularDishes: popRes.status === 'fulfilled' ? popRes.value : initialData?.popularDishes,
+        });
+      } else {
+        const rejected = results.find((r) => r.status === 'rejected');
+        if (rejected) {
+          throw rejected.reason;
+        }
+      }
     } catch (err) {
-      console.error('[MenuContext] Error fetching data:', err);
-      setError('Unable to load menu. Please check your internet connection.');
+      console.error('[MenuContext] Error fetching live data:', err);
+      setMenuItems((current) => {
+        if (!current || current.length === 0) {
+          setError('Unable to reach the live menu server. The cloud server may still be waking up. Tap Retry to reload.');
+        }
+        return current;
+      });
     } finally {
+      if (wakeTimer) clearTimeout(wakeTimer);
+      setIsWakingUp(false);
       setLoading(false);
       isInitialMountRef.current = false;
     }
-  }, []); // Stable empty dependencies - never re-triggers on state updates!
+  }, [initialData]);
 
   useEffect(() => {
     fetchAllData(true);
 
     // Initialize Socket.IO for real-time menu, category & price updates
-    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+    const socketUrl =
+      import.meta.env.VITE_SOCKET_URL ||
+      (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+        ? DEFAULT_PRODUCTION_BACKEND
+        : 'http://localhost:5000');
     const socket = io(socketUrl, {
       reconnectionAttempts: 5,
       reconnectionDelay: 2000,
@@ -273,6 +364,7 @@ export const MenuProvider = ({ children }) => {
         setTableSessionToken,
         updateDishRatingLocally,
         loading,
+        isWakingUp,
         error,
         activeCategory,
         setActiveCategory,

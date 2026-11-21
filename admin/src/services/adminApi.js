@@ -1,11 +1,58 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/admin';
+export const DEFAULT_PRODUCTION_BACKEND = 'https://qissa-backend.onrender.com';
+
+export const getAdminApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return `${DEFAULT_PRODUCTION_BACKEND}/api/admin`;
+  }
+  return 'http://localhost:5000/api/admin';
+};
+
+const API_BASE = getAdminApiBaseUrl();
 
 const adminApi = axios.create({
   baseURL: API_BASE,
-  timeout: 10000,
+  timeout: 60000, // 60s for cloud backend cold starts
 });
+
+// Automatic retry on timeout or network errors
+adminApi.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config;
+    if (!config) return Promise.reject(error);
+
+    // Don't auto-retry login auth failures (401/400)
+    if (config.url?.includes('/auth/login') && error.response?.status < 500) {
+      return Promise.reject(error);
+    }
+
+    config.__retryCount = config.__retryCount || 0;
+    const maxRetries = 2;
+
+    const isTimeout =
+      error.code === 'ECONNABORTED' ||
+      (error.message && error.message.toLowerCase().includes('timeout'));
+    const isNetworkError = !error.response && error.request;
+    const is5xx = error.response && [502, 503, 504].includes(error.response.status);
+
+    if ((isTimeout || isNetworkError || is5xx) && config.__retryCount < maxRetries) {
+      config.__retryCount += 1;
+      const delayMs = config.__retryCount * 1500;
+      console.warn(
+        `[AdminAPI] Request to ${config.url || 'endpoint'} failed (${error.message}). Retrying in ${delayMs}ms (attempt ${config.__retryCount}/${maxRetries})...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return adminApi(config);
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 // Interceptor to inject JWT token
 adminApi.interceptors.request.use((config) => {
